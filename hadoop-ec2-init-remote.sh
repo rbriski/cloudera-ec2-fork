@@ -229,9 +229,13 @@ function scaffold_local_hdfs {
 
 # Common directories, whether the HDFS is instance-local or EBS
 # Settings appropriate to instance type: http://aws.amazon.com/ec2/instance-types/
-function scaffold_hadoop_dirs {
-  NUM_SLAVES=23
+# MAX_MAP_TASKS: Set to about 2x # cores. If you mostly use streaming, turn up
+#   the number of map tasks slightly. (May not be necessary with reuse_jvms)
+# MAX_REDUCE_TASKS: Set this to the number of cores
+# CLUSTER_REDUCE_TASKS: For 1.7GB instances, set to just below the # machines;
+#    for larger memory/core machines, set to just below the # cores
 
+function scaffold_hadoop_dirs {
   case $INSTANCE_TYPE in
   m1.xlarge|c1.xlarge)
     # 15GB 4core x 2   64bit (m1.xlarge) $0.80/hr
@@ -244,17 +248,17 @@ function scaffold_hadoop_dirs {
     disk4_pid=$!
     wait $disk2_pid $disk3_pid $disk4_pid
     MAPRED_LOCAL_DIR=/mnt/hadoop/mapred/local,/mnt2/hadoop/mapred/local,/mnt3/hadoop/mapred/local,/mnt4/hadoop/mapred/local
-    MAX_MAP_TASKS=11            #  8 orig
+    MAX_MAP_TASKS=8             #  8 orig
     MAX_REDUCE_TASKS=4          #  4 orig
-    CLUSTER_REDUCE_TASKS=82     # 10 orig
-    CHILD_OPTS=-Xmx680m
+    CLUSTER_REDUCE_TASKS=42     # 10 orig
+    CHILD_OPTS=-Xmx550m         # 680m orig
     CHILD_ULIMIT=1392640
     ;;
   m1.large)
     # 7.5GB 2 core x 2  64bit $0.40/hr
     prep_disk /mnt2 /dev/sdc true
     MAPRED_LOCAL_DIR=/mnt/hadoop/mapred/local,/mnt2/hadoop/mapred/local
-    MAX_MAP_TASKS=6             #  4 orig
+    MAX_MAP_TASKS=5             #  4 orig
     MAX_REDUCE_TASKS=2          #  2 orig
     CLUSTER_REDUCE_TASKS=44     # 10 orig
     CHILD_OPTS=-Xmx1024m
@@ -263,9 +267,9 @@ function scaffold_hadoop_dirs {
   c1.medium)
     # 1.7GB 2 core x 2.5 32bit $0.20/hr -- 917MB swap -- 4e3db5a292812ed9eaef3f6274596432a7665132 
     MAPRED_LOCAL_DIR=/mnt/hadoop/mapred/local
-    MAX_MAP_TASKS=6             #  4 orig
+    MAX_MAP_TASKS=5             #  4 orig
     MAX_REDUCE_TASKS=2          #  2 orig
-    CLUSTER_REDUCE_TASKS=44     # 10 orig
+    CLUSTER_REDUCE_TASKS=23     # 10 orig
     CHILD_OPTS=-Xmx550m
     CHILD_ULIMIT=1126400
     ;;
@@ -460,8 +464,9 @@ EOF
   <value>true</value>
 </property>
 <property>
+  <!-- large (~100s of nodes) sytems, turn this up. 20 is a large setting -->
   <name>mapred.reduce.parallel.copies</name>
-  <value>$(( NUM_SLAVES + 1 ))</value>
+  <value>10</value>
 </property>
 <property>
   <name>mapred.reduce.tasks</name>
@@ -547,7 +552,7 @@ EOF
     /etc/$HADOOP/conf.dist/hadoop-env.sh
 
   # Hadoop logs should be on the /mnt partition
-  rm -rf /var/log/hadoop /var/log/hadoop
+  rm -rf /var/log/hadoop /var/log/hadoop-0.20
   mkdir /mnt/hadoop/logs
   ln -nfsT /mnt/hadoop/logs /var/log/hadoop
   ln -nfsT /mnt/hadoop/logs /var/log/hadoop-0.20
@@ -789,6 +794,7 @@ function configure_devtools {
 function make_user_accounts {
   for newuser in $USER_ACCOUNTS ; do
     adduser $newuser --disabled-password --gecos "";
+    usermod -a -G hadoopers,sudo,admin  $newuser ;
     sudo -u hadoop hadoop dfs -mkdir          /user/$newuser
     sudo -u hadoop hadoop dfs -chown $newuser /user/$newuser
   done
